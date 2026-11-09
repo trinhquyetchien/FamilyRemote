@@ -9,9 +9,9 @@
 
     <application
         android:allowBackup="true"
-        android:icon="@android:drawable/ic_menu_call"
+        android:icon="@drawable/ic_launcher_foreground"
         android:label="Hỗ Trợ Gia Đình"
-        android:roundIcon="@android:drawable/ic_menu_call"
+        android:roundIcon="@drawable/ic_launcher_foreground"
         android:supportsRtl="true"
         android:usesCleartextTraffic="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
