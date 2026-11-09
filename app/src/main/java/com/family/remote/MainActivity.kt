@@ -1,15 +1,18 @@
 package com.family.remote
 
+import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.*
@@ -21,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 
 class MainActivity : ComponentActivity() {
 
@@ -45,12 +49,20 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { _ ->
+        checkAndPromptAccessibility()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Tự động load server IP lưu trong SharedPreferences nếu có
         val prefs = getSharedPreferences("family_remote", Context.MODE_PRIVATE)
         serverUrlState = prefs.getString("server_url", "ws://192.168.1.100:8080") ?: "ws://192.168.1.100:8080"
+
+        // Vừa vào app -> Tự động xin quyền thông báo (Android 13+) và dẫn vào mở quyền Hỗ trợ tiếp cận
+        requestPermissionsOnStartup()
 
         setContent {
             ParentScreen(
@@ -65,13 +77,15 @@ class MainActivity : ComponentActivity() {
                     if (isSharing) {
                         stopSharing()
                     } else {
-                        startSharing()
+                        if (!isAccessibilityEnabled) {
+                            openAccessibilitySettings()
+                        } else {
+                            startSharing()
+                        }
                     }
                 },
-                onOpenAccessibilitySettings = {
-                    val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                    startActivity(intent)
-                }
+                onOpenAccessibilitySettings = { openAccessibilitySettings() },
+                onOpenAppDetails = { openAppDetailsSettings() }
             )
         }
     }
@@ -80,6 +94,42 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         isAccessibilityEnabled = RemoteInputAccessibilityService.isRunning()
         isSharing = ScreenCaptureService.isRunning
+    }
+
+    private fun requestPermissionsOnStartup() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                return
+            }
+        }
+        checkAndPromptAccessibility()
+    }
+
+    private fun checkAndPromptAccessibility() {
+        if (!RemoteInputAccessibilityService.isRunning()) {
+            openAccessibilitySettings()
+        }
+    }
+
+    private fun openAccessibilitySettings() {
+        try {
+            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+        } catch (_: Exception) {
+            val intent = Intent(Settings.ACTION_SETTINGS)
+            startActivity(intent)
+        }
+    }
+
+    private fun openAppDetailsSettings() {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.fromParts("package", packageName, null)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        startActivity(intent)
     }
 
     private fun startSharing() {
@@ -103,7 +153,8 @@ fun ParentScreen(
     serverUrl: String,
     onServerUrlChange: (String) -> Unit,
     onToggleShare: () -> Unit,
-    onOpenAccessibilitySettings: () -> Unit
+    onOpenAccessibilitySettings: () -> Unit,
+    onOpenAppDetails: () -> Unit
 ) {
     var showConfig by remember { mutableStateOf(false) }
 
@@ -168,7 +219,7 @@ fun ParentScreen(
                 }
             }
 
-            // Phần trạng thái & Hướng dẫn trợ năng
+            // Phần trạng thái & Cảnh báo mở khóa nếu máy cấm
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.fillMaxWidth()
@@ -178,25 +229,40 @@ fun ParentScreen(
                         colors = CardDefaults.cardColors(containerColor = Color(0xFFFEF3C7)),
                         modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
                     ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
+                        Column(modifier = Modifier.padding(14.dp)) {
                             Text(
-                                text = "⚠️ Cần bật quyền hỗ trợ thao tác",
+                                text = "⚠️ Cần cấp quyền hỗ trợ thao tác",
                                 fontWeight = FontWeight.Bold,
-                                color = Color(0xFF92400E)
+                                color = Color(0xFF92400E),
+                                fontSize = 16.sp
                             )
                             Spacer(modifier = Modifier.height(4.dp))
-                            Button(
-                                onClick = onOpenAccessibilitySettings,
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD97706)),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text("Bật quyền trong Cài đặt")
+                            Text(
+                                text = "1. Bấm nút dưới để vào bật 'Hỗ Trợ Gia Đình'.\n2. Nếu bị mờ/cấm: Bấm 'Mở khóa hạn chế' -> Bấm dấu 3 chấm góc trên -> Cho phép cài đặt bị hạn chế.",
+                                fontSize = 13.sp,
+                                color = Color(0xFF78350F),
+                                lineHeight = 18.sp
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    onClick = onOpenAccessibilitySettings,
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD97706)),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("Bật quyền")
+                                }
+                                OutlinedButton(
+                                    onClick = onOpenAppDetails,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("Mở khóa hạn chế", fontSize = 12.sp)
+                                }
                             }
                         }
                     }
                 }
 
-                // Nút cấu hình kín đáo dành cho bạn khi setup ban đầu
                 TextButton(onClick = { showConfig = !showConfig }) {
                     Text(
                         text = if (showConfig) "Đóng cài đặt máy chủ" else "Cài đặt máy chủ (Dành cho con)",
