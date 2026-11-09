@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hỗ Trợ Màn Hình Bố Mẹ Từ Xa</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #0f172a;
+            color: #f1f5f9;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* Sidebar công cụ bên trái */
+        #toolbar {
+            width: 320px;
+            background: #1e293b;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            border-right: 1px solid #334155;
+            box-shadow: 4px 0 16px rgba(0,0,0,0.3);
+        }
+
+        .header h2 {
+            font-size: 20px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 14px;
+            border-radius: 9999px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        .status-online { background: #065f46; color: #34d399; }
+        .status-offline { background: #881337; color: #fda4af; }
+
+        .section-title {
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #94a3b8;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+
+        .btn-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        button {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            background: #334155;
+            color: #f8fafc;
+            border: 1px solid #475569;
+            padding: 12px 14px;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            user-select: none;
+        }
+        button:hover {
+            background: #475569;
+            border-color: #64748b;
+        }
+        button:active {
+            transform: scale(0.97);
+        }
+
+        /* Nút Nguồn và Ngắt kết nối */
+        .btn-power {
+            background: #b91c1c;
+            border-color: #dc2626;
+            grid-column: span 2;
+        }
+        .btn-power:hover { background: #dc2626; }
+
+        .btn-disconnect {
+            background: #475569;
+            border-color: #64748b;
+            color: #fca5a5;
+            grid-column: span 2;
+            margin-top: 10px;
+        }
+        .btn-disconnect:hover {
+            background: #991b1b;
+            color: #ffffff;
+            border-color: #ef4444;
+        }
+
+        .btn-volume {
+            background: #1e3a8a;
+            border-color: #2563eb;
+        }
+        .btn-volume:hover { background: #2563eb; }
+
+        .guide-box {
+            background: #0f172a;
+            border: 1px solid #334155;
+            padding: 14px;
+            border-radius: 10px;
+            font-size: 13px;
+            line-height: 1.6;
+            color: #94a3b8;
+        }
+
+        /* Khung hiển thị màn hình mô phỏng Emulator */
+        #viewport {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #090d16;
+            padding: 20px;
+            position: relative;
+        }
+
+        .phone-frame {
+            position: relative;
+            background: #1e293b;
+            padding: 12px;
+            border-radius: 36px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7), 0 0 0 4px #334155;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* Nút vật lý mô phỏng bên cạnh viền máy */
+        .emulator-controls-right {
+            position: absolute;
+            right: -56px;
+            top: 100px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .side-btn {
+            background: #334155;
+            border: 1px solid #475569;
+            color: #e2e8f0;
+            width: 44px;
+            height: 44px;
+            border-radius: 10px;
+            padding: 0;
+            font-size: 18px;
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.3);
+        }
+        .side-btn:hover { background: #475569; }
+
+        #phone-screen {
+            display: block;
+            max-height: 84vh;
+            border-radius: 24px;
+            cursor: crosshair;
+            background: #000;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Bảng điều khiển Emulator -->
+    <div id="toolbar">
+        <div class="header">
+            <h2>Hỗ Trợ Bố Mẹ</h2>
+            <span id="status-badge" class="status-badge status-offline">● Đang chờ bố mẹ bật...</span>
+        </div>
+
+        <div>
+            <div class="section-title">Phím ảo Android</div>
+            <div class="btn-grid">
+                <button onclick="sendAction('back')">◀ Quay lại (Back)</button>
+                <button onclick="sendAction('home')">● Màn hình chính</button>
+                <button onclick="sendAction('recents')">■ Đa nhiệm</button>
+                <button onclick="sendAction('notifications')">▼ Thông báo</button>
+            </div>
+        </div>
+
+        <div>
+            <div class="section-title">Phím cứng thiết bị</div>
+            <div class="btn-grid">
+                <button class="btn-volume" onclick="sendAction('volume_up')">🔊 Tăng âm (+)</button>
+                <button class="btn-volume" onclick="sendAction('volume_down')">🔉 Giảm âm (-)</button>
+                <button class="btn-power" onclick="sendAction('power')">⏻ Bật Menu Nguồn</button>
+                <button onclick="sendAction('lock')">🔒 Khóa màn hình</button>
+            </div>
+        </div>
+
+        <div style="margin-top: auto;">
+            <div class="guide-box">
+                🖱️ <strong>Chuột trái:</strong> Chạm (Tap)<br>
+                ↔️ <strong>Kéo chuột:</strong> Vuốt lướt màn hình
+            </div>
+            <button class="btn-disconnect" onclick="endRemoteSession()">
+                ✕ DỪNG & TẮT PHIÊN TRÊN MÁY BỐ MẸ
+            </button>
+        </div>
+    </div>
+
+    <!-- Màn hình điện thoại -->
+    <div id="viewport">
+        <div class="phone-frame">
+            <img id="phone-screen" alt="Chờ bố mẹ bật hỗ trợ..." src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='360' height='740'><rect width='100%' height='100%' fill='%230f172a'/><text x='50%' y='50%' fill='%2364748b' font-family='sans-serif' font-size='16' text-anchor='middle'>Đang đợi hình ảnh máy bố mẹ...</text></svg>" />
+            
+            <!-- Cụm phím nhanh kiểu Android Studio Emulator -->
+            <div class="emulator-controls-right">
+                <button class="side-btn" title="Nguồn" onclick="sendAction('power')">⏻</button>
+                <button class="side-btn" title="Tăng âm lượng" onclick="sendAction('volume_up')">＋</button>
+                <button class="side-btn" title="Giảm âm lượng" onclick="sendAction('volume_down')">－</button>
+                <button class="side-btn" title="Quay lại" onclick="sendAction('back')">◀</button>
+                <button class="side-btn" title="Home" onclick="sendAction('home')">●</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const img = document.getElementById('phone-screen');
+        const badge = document.getElementById('status-badge');
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const ws = new WebSocket(`${protocol}//${window.location.host}`);
+
+        ws.onopen = () => {
+            console.log('Đã kết nối Server điều khiển');
+            ws.send(JSON.stringify({ type: 'register', role: 'web' }));
+        };
+
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.type === 'status') {
+                if (data.status === 'phone_connected') {
+                    badge.className = 'status-badge status-online';
+                    badge.textContent = '● Đang kết nối máy bố mẹ';
+                } else {
+                    badge.className = 'status-badge status-offline';
+                    badge.textContent = '● Bố mẹ đã tắt kết nối';
+                }
+            } else if (data.type === 'frame') {
+                img.src = 'data:image/jpeg;base64,' + data.image;
+            }
+        };
+
+        // Bắt sự kiện chuột: Nhấp chuột = Chạm, Kéo rê = Vuốt
+        let startX = 0, startY = 0;
+        let isMouseDown = false;
+
+        img.addEventListener('mousedown', (e) => {
+            isMouseDown = true;
+            const rect = img.getBoundingClientRect();
+            startX = (e.clientX - rect.left) / rect.width;
+            startY = (e.clientY - rect.top) / rect.height;
+        });
+
+        img.addEventListener('mouseup', (e) => {
+            if (!isMouseDown) return;
+            isMouseDown = false;
+            const rect = img.getBoundingClientRect();
+            const endX = (e.clientX - rect.left) / rect.width;
+            const endY = (e.clientY - rect.top) / rect.height;
+
+            const dist = Math.hypot(endX - startX, endY - startY);
+            if (dist < 0.02) {
+                // Nhấp chuột tại chỗ -> Chạm (Tap)
+                ws.send(JSON.stringify({ type: 'tap', x: startX, y: startY }));
+            } else {
+                // Kéo chuột -> Vuốt (Swipe)
+                ws.send(JSON.stringify({
+                    type: 'swipe',
+                    startX: startX,
+                    startY: startY,
+                    endX: endX,
+                    endY: endY,
+                    duration: 250
+                }));
+            }
+        });
+
+        function sendAction(action) {
+            ws.send(JSON.stringify({ type: action }));
+        }
+
+        function endRemoteSession() {
+            if (confirm("Bạn có chắc chắn muốn ngắt kết nối và đóng app trên máy bố mẹ?")) {
+                sendAction('disconnect');
+                badge.className = 'status-badge status-offline';
+                badge.textContent = '● Đã ngắt kết nối';
+            }
+        }
+    </script>
+</body>
+</html>
