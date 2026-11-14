@@ -134,7 +134,13 @@ class MainActivity : ComponentActivity() {
 
     private fun startSharing() {
         val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        screenCaptureLauncher.launch(projectionManager.createScreenCaptureIntent())
+        val captureIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val config = android.media.projection.MediaProjectionConfig.createConfigForDefaultDisplay()
+            projectionManager.createScreenCaptureIntent(config)
+        } else {
+            projectionManager.createScreenCaptureIntent()
+        }
+        screenCaptureLauncher.launch(captureIntent)
     }
 
     private fun stopSharing() {
