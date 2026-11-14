@@ -18,6 +18,8 @@ import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.HandlerThread
 import android.os.IBinder
 import android.provider.Settings
 import android.util.Base64
@@ -28,6 +30,7 @@ import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.*
 import okhttp3.*
+import okio.ByteString.Companion.toByteString
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
@@ -57,6 +60,8 @@ class ScreenCaptureService : Service() {
     private var lastResultData: Intent? = null
     private var orientationListener: OrientationEventListener? = null
     private var currentOrientation: String = "portrait"
+    private var captureThread: HandlerThread? = null
+    private var captureHandler: Handler? = null
 
     private val client = OkHttpClient.Builder()
         .connectionSpecs(listOf(ConnectionSpec.MODERN_TLS, ConnectionSpec.CLEARTEXT))
@@ -168,6 +173,14 @@ class ScreenCaptureService : Service() {
         }
     }
 
+    private fun ensureCaptureThread(): Handler {
+        if (captureThread == null || !captureThread!!.isAlive) {
+            captureThread = HandlerThread("ScreenCaptureWorker").apply { start() }
+            captureHandler = Handler(captureThread!!.looper)
+        }
+        return captureHandler!!
+    }
+
     private fun recreateVirtualDisplay() {
         if (mediaProjection == null) return
         try {
@@ -176,8 +189,8 @@ class ScreenCaptureService : Service() {
             imageReader?.close()
             imageReader = null
 
+            val handler = ensureCaptureThread()
             imageReader = ImageReader.newInstance(screenWidth, screenHeight, PixelFormat.RGBA_8888, 2)
-            val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
             virtualDisplay = mediaProjection?.createVirtualDisplay(
                 "ScreenCapture",
                 screenWidth,
@@ -186,17 +199,27 @@ class ScreenCaptureService : Service() {
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                 imageReader?.surface,
                 null,
-                mainHandler
+                handler
             )
 
             var lastFrameTime = 0L
             imageReader?.setOnImageAvailableListener({ reader ->
                 val now = System.currentTimeMillis()
-                if (now - lastFrameTime < 60) {
+                // Nâng FPS lên 35-40 FPS (khoảng 25-28ms)
+                if (now - lastFrameTime < 25) {
                     val img = reader.acquireLatestImage()
                     img?.close()
                     return@setOnImageAvailableListener
                 }
+
+                // Kiểm tra queueSize của WebSocket OkHttp để tự động drop frame nếu mạng chập chờn
+                val pendingBytes = webSocket?.queueSize() ?: 0L
+                if (pendingBytes > 256 * 1024) { // Nếu hàng đợi gửi quá 256KB -> drop frame
+                    val img = reader.acquireLatestImage()
+                    img?.close()
+                    return@setOnImageAvailableListener
+                }
+
                 lastFrameTime = now
 
                 var image: Image? = null
@@ -210,7 +233,7 @@ class ScreenCaptureService : Service() {
                 } finally {
                     image?.close()
                 }
-            }, mainHandler)
+            }, handler)
         } catch (e: Exception) {
             Log.e(TAG, "Lỗi tạo lại VirtualDisplay: ${e.message}")
         }
@@ -298,8 +321,8 @@ class ScreenCaptureService : Service() {
             }
         }, android.os.Handler(android.os.Looper.getMainLooper()))
 
+        val handler = ensureCaptureThread()
         imageReader = ImageReader.newInstance(screenWidth, screenHeight, PixelFormat.RGBA_8888, 2)
-        val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
         virtualDisplay = mediaProjection?.createVirtualDisplay(
             "ScreenCapture",
             screenWidth,
@@ -308,18 +331,27 @@ class ScreenCaptureService : Service() {
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
             imageReader?.surface,
             null,
-            mainHandler
+            handler
         )
 
         var lastFrameTime = 0L
         imageReader?.setOnImageAvailableListener({ reader ->
             val now = System.currentTimeMillis()
-            // Giới hạn khoảng 15-20 FPS để mạng mượt
-            if (now - lastFrameTime < 60) {
+            // Nâng FPS lên 35-40 FPS (khoảng 25-28ms)
+            if (now - lastFrameTime < 25) {
                 val img = reader.acquireLatestImage()
                 img?.close()
                 return@setOnImageAvailableListener
             }
+
+            // Kiểm tra queueSize của WebSocket OkHttp để tự động drop frame nếu mạng chập chờn
+            val pendingBytes = webSocket?.queueSize() ?: 0L
+            if (pendingBytes > 256 * 1024) { // Nếu hàng đợi gửi quá 256KB -> drop frame
+                val img = reader.acquireLatestImage()
+                img?.close()
+                return@setOnImageAvailableListener
+            }
+
             lastFrameTime = now
 
             var image: Image? = null
@@ -333,7 +365,7 @@ class ScreenCaptureService : Service() {
             } finally {
                 image?.close()
             }
-        }, mainHandler)
+        }, handler)
     }
 
     private fun processAndSendImage(image: Image) {
@@ -357,20 +389,13 @@ class ScreenCaptureService : Service() {
             bitmap
         }
 
-        // Nén ảnh sang JPEG để truyền nhẹ
-        val outputStream = ByteArrayOutputStream()
-        croppedBitmap.compress(Bitmap.CompressFormat.JPEG, 60, outputStream)
+        // Nén ảnh sang JPEG chất lượng 55% để cân bằng sắc nét và tốc độ nén siêu nhanh
+        val outputStream = ByteArrayOutputStream(64 * 1024)
+        croppedBitmap.compress(Bitmap.CompressFormat.JPEG, 55, outputStream)
         val jpegBytes = outputStream.toByteArray()
 
-        val base64Data = Base64.encodeToString(jpegBytes, Base64.NO_WRAP)
-        val frameJson = JSONObject().apply {
-            put("type", "frame")
-            put("image", base64Data)
-            put("width", screenWidth)
-            put("height", screenHeight)
-        }
-
-        webSocket?.send(frameJson.toString())
+        // Gửi Direct Binary ByteString thay vì JSON Base64 (giảm 33% payload, triệt tiêu overhead encode/decode)
+        webSocket?.send(jpegBytes.toByteString())
 
         if (croppedBitmap != bitmap) {
             croppedBitmap.recycle()
@@ -485,6 +510,9 @@ class ScreenCaptureService : Service() {
         reconnectJob?.cancel()
         reconnectJob = null
         try {
+            captureThread?.quitSafely()
+            captureThread = null
+            captureHandler = null
             virtualDisplay?.release()
             virtualDisplay = null
             imageReader?.close()
