@@ -13,6 +13,8 @@ import android.provider.Settings
 import android.content.ClipboardManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -34,7 +36,8 @@ class MainActivity : ComponentActivity() {
 
     private var isSharing by mutableStateOf(false)
     private var isAccessibilityEnabled by mutableStateOf(false)
-    private var serverUrlState by mutableStateOf("wss://relaxed-major-hen.ngrok-free.app")
+    private var serverUrlState by mutableStateOf("wss://fast.trycloudflare.com/ws")
+    private var isFetchingGist by mutableStateOf(false)
 
     private val screenCaptureLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -63,7 +66,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         val prefs = getSharedPreferences("family_remote", Context.MODE_PRIVATE)
-        serverUrlState = prefs.getString("server_url", "wss://relaxed-major-hen.ngrok-free.app") ?: "wss://relaxed-major-hen.ngrok-free.app"
+        serverUrlState = prefs.getString("server_url", "wss://fast.trycloudflare.com/ws") ?: "wss://fast.trycloudflare.com/ws"
 
         // Vừa vào app -> Tự động xin quyền thông báo (Android 13+) và dẫn vào mở quyền Hỗ trợ tiếp cận
         requestPermissionsOnStartup()
@@ -84,7 +87,7 @@ class MainActivity : ComponentActivity() {
                         if (!isAccessibilityEnabled) {
                             openAccessibilitySettings()
                         } else {
-                            startSharing()
+                            prepareAndStartSharing()
                         }
                     }
                 },
@@ -135,6 +138,21 @@ class MainActivity : ComponentActivity() {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         startActivity(intent)
+    }
+
+    private fun prepareAndStartSharing() {
+        val prefs = getSharedPreferences("family_remote", Context.MODE_PRIVATE)
+        isFetchingGist = true
+        lifecycleScope.launch {
+            val gistUrl = GistDiscoveryManager.fetchDynamicUrl()
+            if (!gistUrl.isNullOrEmpty()) {
+                serverUrlState = gistUrl
+                prefs.edit().putString("server_url", gistUrl).apply()
+                Toast.makeText(this@MainActivity, "Đã cập nhật máy chủ từ xa mới nhất!", Toast.LENGTH_SHORT).show()
+            }
+            isFetchingGist = false
+            startSharing()
+        }
     }
 
     private fun startSharing() {
@@ -372,8 +390,8 @@ fun ParentScreen(
 
                         OutlinedButton(
                             onClick = {
-                                onServerUrlChange("wss://relaxed-major-hen.ngrok-free.app")
-                                Toast.makeText(context, "Đã đặt về mặc định", Toast.LENGTH_SHORT).show()
+                                onServerUrlChange("wss://fast.trycloudflare.com/ws")
+                                Toast.makeText(context, "Đã đặt về mặc định Cloudflare", Toast.LENGTH_SHORT).show()
                             },
                             modifier = Modifier.weight(1f)
                         ) {

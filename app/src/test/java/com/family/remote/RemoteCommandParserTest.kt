@@ -43,4 +43,24 @@ class RemoteCommandParserTest {
         assertEquals(800f, end.first, 0.001f)
         assertEquals(1800f, end.second, 0.001f)
     }
+
+    @Test
+    fun testConvertToWebSocketUrl() {
+        assertEquals(
+            "wss://fast.trycloudflare.com/ws",
+            RemoteCommandParser.convertToWebSocketUrl("https://fast.trycloudflare.com")
+        )
+        assertEquals(
+            "wss://fast.trycloudflare.com/ws",
+            RemoteCommandParser.convertToWebSocketUrl("https://fast.trycloudflare.com/")
+        )
+        assertEquals(
+            "wss://fast.trycloudflare.com/ws",
+            RemoteCommandParser.convertToWebSocketUrl("wss://fast.trycloudflare.com/ws")
+        )
+        assertEquals(
+            "ws://192.168.1.100:8080",
+            RemoteCommandParser.convertToWebSocketUrl("http://192.168.1.100:8080")
+        )
+    }
 }

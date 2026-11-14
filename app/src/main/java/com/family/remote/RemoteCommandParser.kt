@@ -49,4 +49,26 @@ object RemoteCommandParser {
         val endY = normEndY.coerceIn(0.0, 1.0).toFloat() * realHeight
         return Pair(Pair(startX, startY), Pair(endX, endY))
     }
+
+    /**
+     * Chuyển đổi URL từ Gist (VD: https://fast.trycloudflare.com) thành WebSocket URL Cloudflare (/ws)
+     */
+    fun convertToWebSocketUrl(rawUrl: String): String {
+        var trimmed = rawUrl.trim()
+        if (trimmed.isEmpty()) return ""
+
+        if (trimmed.startsWith("https://")) {
+            trimmed = trimmed.replaceFirst("https://", "wss://")
+        } else if (trimmed.startsWith("http://")) {
+            trimmed = trimmed.replaceFirst("http://", "ws://")
+        }
+
+        trimmed = trimmed.trimEnd('/')
+
+        if (trimmed.contains("trycloudflare.com") && !trimmed.endsWith("/ws")) {
+            trimmed = "$trimmed/ws"
+        }
+
+        return trimmed
+    }
 }
