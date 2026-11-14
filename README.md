@@ -2,6 +2,14 @@
 
 Ứng dụng hỗ trợ điều khiển màn hình điện thoại Android của bố mẹ từ xa thông qua trình duyệt Laptop/Điện thoại.
 
+---
+
+## 📸 Giao Diện Điều Khiển Trực Quan Trên Linux
+
+![Family Remote Linux Desktop Viewer](docs/screenshots/linux-desktop-viewer.png)
+
+---
+
 ## ✨ Tính năng chính
 
 - **Dành cho bố mẹ (1 chạm tối giản):**
