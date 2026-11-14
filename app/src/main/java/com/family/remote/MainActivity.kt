@@ -34,7 +34,7 @@ class MainActivity : ComponentActivity() {
 
     private var isSharing by mutableStateOf(false)
     private var isAccessibilityEnabled by mutableStateOf(false)
-    private var serverUrlState by mutableStateOf("ws://127.0.0.1:8080")
+    private var serverUrlState by mutableStateOf("wss://draw-vendor-certificates-concept.trycloudflare.com")
 
     private val screenCaptureLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -63,7 +63,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         val prefs = getSharedPreferences("family_remote", Context.MODE_PRIVATE)
-        serverUrlState = prefs.getString("server_url", "ws://127.0.0.1:8080") ?: "ws://127.0.0.1:8080"
+        serverUrlState = prefs.getString("server_url", "wss://draw-vendor-certificates-concept.trycloudflare.com") ?: "wss://draw-vendor-certificates-concept.trycloudflare.com"
 
         // Vừa vào app -> Tự động xin quyền thông báo (Android 13+) và dẫn vào mở quyền Hỗ trợ tiếp cận
         requestPermissionsOnStartup()
