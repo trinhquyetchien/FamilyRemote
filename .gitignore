@@ -21,6 +21,3 @@ build/
 # Server
 server/node_modules/
 server/npm-debug.log
-
-# Desktop Go binary
-desktop/family-remote
