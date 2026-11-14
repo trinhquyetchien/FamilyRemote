@@ -13,6 +13,7 @@
             display: flex;
             height: 100vh;
             overflow: hidden;
+            user-select: none;
         }
 
         /* Sidebar công cụ bên trái */
@@ -22,9 +23,10 @@
             padding: 24px;
             display: flex;
             flex-direction: column;
-            gap: 20px;
+            gap: 18px;
             border-right: 1px solid #334155;
             box-shadow: 4px 0 16px rgba(0,0,0,0.3);
+            z-index: 10;
         }
 
         .header h2 {
@@ -41,9 +43,11 @@
             border-radius: 9999px;
             font-size: 13px;
             font-weight: 600;
+            transition: all 0.3s ease;
         }
         .status-online { background: #065f46; color: #34d399; }
         .status-offline { background: #881337; color: #fda4af; }
+        .status-connecting { background: #854d0e; color: #fde047; }
 
         .section-title {
             font-size: 13px;
@@ -74,7 +78,6 @@
             font-weight: 600;
             cursor: pointer;
             transition: all 0.15s ease;
-            user-select: none;
         }
         button:hover {
             background: #475569;
@@ -96,7 +99,7 @@
             background: #475569;
             border-color: #64748b;
             color: #fca5a5;
-            grid-column: span 2;
+            width: 100%;
             margin-top: 10px;
         }
         .btn-disconnect:hover {
@@ -130,6 +133,7 @@
             background: #090d16;
             padding: 20px;
             position: relative;
+            overflow: hidden;
         }
 
         .phone-frame {
@@ -141,6 +145,7 @@
             display: flex;
             align-items: center;
             justify-content: center;
+            max-height: 90vh;
         }
 
         /* Nút vật lý mô phỏng bên cạnh viền máy */
@@ -165,12 +170,28 @@
         }
         .side-btn:hover { background: #475569; }
 
-        #phone-screen {
+        #phone-canvas {
             display: block;
-            max-height: 84vh;
             border-radius: 24px;
             cursor: crosshair;
             background: #000;
+            max-height: 84vh;
+            max-width: 80vw;
+            width: auto;
+            height: 84vh;
+            aspect-ratio: 9 / 19.5;
+            object-fit: contain;
+            touch-action: none;
+        }
+
+        .resolution-tag {
+            position: absolute;
+            bottom: -28px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 11px;
+            color: #64748b;
+            white-space: nowrap;
         }
     </style>
 </head>
@@ -206,7 +227,8 @@
         <div style="margin-top: auto;">
             <div class="guide-box">
                 🖱️ <strong>Chuột trái:</strong> Chạm (Tap)<br>
-                ↔️ <strong>Kéo chuột:</strong> Vuốt lướt màn hình
+                ↔️ <strong>Kéo chuột:</strong> Vuốt lướt màn hình (Swipe)<br>
+                🎯 <strong>Tọa độ:</strong> Chuẩn xác theo tỉ lệ thực
             </div>
             <button class="btn-disconnect" onclick="endRemoteSession()">
                 ✕ DỪNG & TẮT PHIÊN TRÊN MÁY BỐ MẸ
@@ -217,7 +239,8 @@
     <!-- Màn hình điện thoại -->
     <div id="viewport">
         <div class="phone-frame">
-            <img id="phone-screen" alt="Chờ bố mẹ bật hỗ trợ..." src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='360' height='740'><rect width='100%' height='100%' fill='%230f172a'/><text x='50%' y='50%' fill='%2364748b' font-family='sans-serif' font-size='16' text-anchor='middle'>Đang đợi hình ảnh máy bố mẹ...</text></svg>" />
+            <canvas id="phone-canvas" width="720" height="1560"></canvas>
+            <div id="resolution-tag" class="resolution-tag">Độ phân giải: Đang chờ...</div>
             
             <!-- Cụm phím nhanh kiểu Android Studio Emulator -->
             <div class="emulator-controls-right">
@@ -231,75 +254,159 @@
     </div>
 
     <script>
-        const img = document.getElementById('phone-screen');
+        const canvas = document.getElementById('phone-canvas');
+        const ctx = canvas.getContext('2d');
         const badge = document.getElementById('status-badge');
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const ws = new WebSocket(`${protocol}//${window.location.host}`);
+        const resolutionTag = document.getElementById('resolution-tag');
+        
+        let ws = null;
+        let reconnectTimeout = null;
+        let img = new Image();
+        let isPhoneConnected = false;
 
-        ws.onopen = () => {
-            console.log('Đã kết nối Server điều khiển');
-            ws.send(JSON.stringify({ type: 'register', role: 'web' }));
-        };
+        // Vẽ màn hình chờ ban đầu
+        function drawPlaceholder(text = "Đang đợi hình ảnh máy bố mẹ...") {
+            ctx.fillStyle = "#0f172a";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = "#64748b";
+            ctx.font = "bold 24px -apple-system, BlinkMacSystemFont, sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+        }
+        drawPlaceholder();
 
-        ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            if (data.type === 'status') {
-                if (data.status === 'phone_connected') {
-                    badge.className = 'status-badge status-online';
-                    badge.textContent = '● Đang kết nối máy bố mẹ';
-                } else {
-                    badge.className = 'status-badge status-offline';
-                    badge.textContent = '● Bố mẹ đã tắt kết nối';
+        function connectWebSocket() {
+            if (reconnectTimeout) clearTimeout(reconnectTimeout);
+
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${window.location.host}`);
+
+            ws.onopen = () => {
+                console.log('[WS] Đã kết nối Server điều khiển');
+                ws.send(JSON.stringify({ type: 'register', role: 'web' }));
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'status') {
+                        if (data.status === 'phone_connected') {
+                            isPhoneConnected = true;
+                            badge.className = 'status-badge status-online';
+                            badge.textContent = '● Đang kết nối máy bố mẹ';
+                            if (data.screenWidth && data.screenHeight) {
+                                updateCanvasResolution(data.screenWidth, data.screenHeight);
+                            }
+                        } else {
+                            isPhoneConnected = false;
+                            badge.className = 'status-badge status-offline';
+                            badge.textContent = '● Bố mẹ đã tắt kết nối';
+                            drawPlaceholder("Bố mẹ đã ngắt kết nối");
+                        }
+                    } else if (data.type === 'frame') {
+                        if (!isPhoneConnected) {
+                            isPhoneConnected = true;
+                            badge.className = 'status-badge status-online';
+                            badge.textContent = '● Đang kết nối máy bố mẹ';
+                        }
+                        if (data.width && data.height && (canvas.width !== data.width || canvas.height !== data.height)) {
+                            updateCanvasResolution(data.width, data.height);
+                        }
+                        img.onload = () => {
+                            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                        };
+                        img.src = 'data:image/jpeg;base64,' + data.image;
+                    }
+                } catch (err) {
+                    console.error('[WS] Lỗi parse frame:', err);
                 }
-            } else if (data.type === 'frame') {
-                img.src = 'data:image/jpeg;base64,' + data.image;
-            }
-        };
+            };
 
-        // Bắt sự kiện chuột: Nhấp chuột = Chạm, Kéo rê = Vuốt
+            ws.onclose = () => {
+                badge.className = 'status-badge status-connecting';
+                badge.textContent = '○ Mất kết nối tới máy chủ, đang thử lại...';
+                isPhoneConnected = false;
+                reconnectTimeout = setTimeout(connectWebSocket, 2000);
+            };
+
+            ws.onerror = (err) => {
+                console.error('[WS Error]', err);
+                ws.close();
+            };
+        }
+
+        function updateCanvasResolution(w, h) {
+            canvas.width = w;
+            canvas.height = h;
+            canvas.style.aspectRatio = `${w} / ${h}`;
+            resolutionTag.textContent = `Độ phân giải hiển thị: ${w} x ${h}`;
+        }
+
+        connectWebSocket();
+
+        // Xử lý sự kiện chuột / cử chỉ vuốt
         let startX = 0, startY = 0;
         let isMouseDown = false;
+        let startTime = 0;
 
-        img.addEventListener('mousedown', (e) => {
+        function getNormalizedCoordinates(e) {
+            const rect = canvas.getBoundingClientRect();
+            const clientX = e.clientX ?? (e.touches && e.touches[0]?.clientX);
+            const clientY = e.clientY ?? (e.touches && e.touches[0]?.clientY);
+            
+            const normX = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+            const normY = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+            return { x: normX, y: normY };
+        }
+
+        canvas.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return; // Chỉ nhận chuột trái
             isMouseDown = true;
-            const rect = img.getBoundingClientRect();
-            startX = (e.clientX - rect.left) / rect.width;
-            startY = (e.clientY - rect.top) / rect.height;
+            startTime = Date.now();
+            const pos = getNormalizedCoordinates(e);
+            startX = pos.x;
+            startY = pos.y;
         });
 
-        img.addEventListener('mouseup', (e) => {
+        window.addEventListener('mouseup', (e) => {
             if (!isMouseDown) return;
             isMouseDown = false;
-            const rect = img.getBoundingClientRect();
-            const endX = (e.clientX - rect.left) / rect.width;
-            const endY = (e.clientY - rect.top) / rect.height;
-
+            
+            const pos = getNormalizedCoordinates(e);
+            const endX = pos.x;
+            const endY = pos.y;
+            const elapsed = Date.now() - startTime;
             const dist = Math.hypot(endX - startX, endY - startY);
-            if (dist < 0.02) {
+
+            if (dist < 0.015) {
                 // Nhấp chuột tại chỗ -> Chạm (Tap)
-                ws.send(JSON.stringify({ type: 'tap', x: startX, y: startY }));
+                sendAction('tap', { x: startX, y: startY });
             } else {
                 // Kéo chuột -> Vuốt (Swipe)
-                ws.send(JSON.stringify({
-                    type: 'swipe',
+                const duration = Math.min(600, Math.max(150, elapsed));
+                sendAction('swipe', {
                     startX: startX,
                     startY: startY,
                     endX: endX,
                     endY: endY,
-                    duration: 250
-                }));
+                    duration: duration
+                });
             }
         });
 
-        function sendAction(action) {
-            ws.send(JSON.stringify({ type: action }));
+        function sendAction(action, extra = {}) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: action, ...extra }));
+            } else {
+                console.warn('[Action] WebSocket chưa sẵn sàng để gửi', action);
+            }
         }
 
         function endRemoteSession() {
             if (confirm("Bạn có chắc chắn muốn ngắt kết nối và đóng app trên máy bố mẹ?")) {
                 sendAction('disconnect');
                 badge.className = 'status-badge status-offline';
-                badge.textContent = '● Đã ngắt kết nối';
+                badge.textContent = '● Đã yêu cầu ngắt kết nối';
             }
         }
     </script>
