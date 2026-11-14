@@ -191,59 +191,72 @@ class ScreenCaptureService : Service() {
     private fun recreateVirtualDisplay() {
         if (mediaProjection == null) return
         try {
-            virtualDisplay?.release()
-            virtualDisplay = null
-            imageReader?.close()
-            imageReader = null
-
             val handler = ensureCaptureThread()
-            imageReader = ImageReader.newInstance(screenWidth, screenHeight, PixelFormat.RGBA_8888, 2)
-            virtualDisplay = mediaProjection?.createVirtualDisplay(
-                "ScreenCapture",
-                screenWidth,
-                screenHeight,
-                screenDensity,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                imageReader?.surface,
-                null,
-                handler
-            )
+            val oldImageReader = imageReader
 
-            var lastFrameTime = 0L
-            imageReader?.setOnImageAvailableListener({ reader ->
-                val now = System.currentTimeMillis()
-                // Giới hạn 24-25 FPS (~40ms interval) mượt mà, tối ưu mạng 4G
-                if (now - lastFrameTime < FRAME_INTERVAL_MS) {
-                    val img = reader.acquireLatestImage()
-                    img?.close()
-                    return@setOnImageAvailableListener
-                }
+            // Tạo ImageReader mới với kích thước xoay mới
+            val newImageReader = ImageReader.newInstance(screenWidth, screenHeight, PixelFormat.RGBA_8888, 2)
+            setupImageAvailableListener(newImageReader, handler)
+            imageReader = newImageReader
 
-                // Kiểm tra queueSize của WebSocket OkHttp: nếu quá 64KB -> drop frame ngay để không bị tích tụ trễ trên 4G
-                val pendingBytes = webSocket?.queueSize() ?: 0L
-                if (pendingBytes > MAX_PENDING_QUEUE_BYTES) {
-                    val img = reader.acquireLatestImage()
-                    img?.close()
-                    return@setOnImageAvailableListener
-                }
+            // Sử dụng virtualDisplay.resize(...) và thay đổi surface thay vì release VirtualDisplay
+            // Tránh SecurityException trên Android 14+ do token projection dùng 1 lần
+            if (virtualDisplay != null) {
+                virtualDisplay?.resize(screenWidth, screenHeight, screenDensity)
+                virtualDisplay?.surface = newImageReader.surface
+            } else {
+                virtualDisplay = mediaProjection?.createVirtualDisplay(
+                    "ScreenCapture",
+                    screenWidth,
+                    screenHeight,
+                    screenDensity,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                    newImageReader.surface,
+                    null,
+                    handler
+                )
+            }
 
-                lastFrameTime = now
-
-                var image: Image? = null
-                try {
-                    image = reader.acquireLatestImage()
-                    if (image != null) {
-                        processAndSendImage(image)
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Lỗi đọc frame sau khi xoay: ${e.message}")
-                } finally {
-                    image?.close()
-                }
-            }, handler)
+            oldImageReader?.close()
+            Log.i(TAG, "Đã resize VirtualDisplay thành công: ${screenWidth}x${screenHeight}")
         } catch (e: Exception) {
-            Log.e(TAG, "Lỗi tạo lại VirtualDisplay: ${e.message}")
+            Log.e(TAG, "Lỗi resize VirtualDisplay: ${e.message}", e)
         }
+    }
+
+    private fun setupImageAvailableListener(reader: ImageReader, handler: Handler) {
+        var lastFrameTime = 0L
+        reader.setOnImageAvailableListener({ r ->
+            val now = System.currentTimeMillis()
+            // Giới hạn 24-25 FPS (~40ms interval) mượt mà, tối ưu mạng 4G
+            if (now - lastFrameTime < FRAME_INTERVAL_MS) {
+                val img = r.acquireLatestImage()
+                img?.close()
+                return@setOnImageAvailableListener
+            }
+
+            // Kiểm tra queueSize của WebSocket OkHttp: nếu quá 64KB -> drop frame ngay để không bị tích tụ trễ trên 4G
+            val pendingBytes = webSocket?.queueSize() ?: 0L
+            if (pendingBytes > MAX_PENDING_QUEUE_BYTES) {
+                val img = r.acquireLatestImage()
+                img?.close()
+                return@setOnImageAvailableListener
+            }
+
+            lastFrameTime = now
+
+            var image: Image? = null
+            try {
+                image = r.acquireLatestImage()
+                if (image != null) {
+                    processAndSendImage(image)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Lỗi đọc frame: ${e.message}")
+            } finally {
+                image?.close()
+            }
+        }, handler)
     }
 
     private fun connectWebSocket(serverUrl: String, resultCode: Int, resultData: Intent) {
@@ -321,15 +334,19 @@ class ScreenCaptureService : Service() {
     private fun startMediaProjection(resultCode: Int, resultData: Intent) {
         val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         mediaProjection = projectionManager.getMediaProjection(resultCode, resultData)
-        mediaProjection?.registerCallback(object : MediaProjection.Callback() {
+            mediaProjection?.registerCallback(object : MediaProjection.Callback() {
             override fun onStop() {
                 super.onStop()
-                stopSelf()
+                Log.w(TAG, "MediaProjection.Callback onStop triggered. isIntentionalStop=$isIntentionalStop")
+                if (isIntentionalStop) {
+                    stopSelf()
+                }
             }
         }, android.os.Handler(android.os.Looper.getMainLooper()))
 
         val handler = ensureCaptureThread()
         imageReader = ImageReader.newInstance(screenWidth, screenHeight, PixelFormat.RGBA_8888, 2)
+        setupImageAvailableListener(imageReader!!, handler)
         virtualDisplay = mediaProjection?.createVirtualDisplay(
             "ScreenCapture",
             screenWidth,
@@ -340,39 +357,6 @@ class ScreenCaptureService : Service() {
             null,
             handler
         )
-
-        var lastFrameTime = 0L
-        imageReader?.setOnImageAvailableListener({ reader ->
-            val now = System.currentTimeMillis()
-            // Giới hạn 24-25 FPS (~40ms interval) mượt mà, tối ưu mạng 4G
-            if (now - lastFrameTime < FRAME_INTERVAL_MS) {
-                val img = reader.acquireLatestImage()
-                img?.close()
-                return@setOnImageAvailableListener
-            }
-
-            // Kiểm tra queueSize của WebSocket OkHttp: nếu quá 64KB -> drop frame ngay để không bị tích tụ trễ trên 4G
-            val pendingBytes = webSocket?.queueSize() ?: 0L
-            if (pendingBytes > MAX_PENDING_QUEUE_BYTES) {
-                val img = reader.acquireLatestImage()
-                img?.close()
-                return@setOnImageAvailableListener
-            }
-
-            lastFrameTime = now
-
-            var image: Image? = null
-            try {
-                image = reader.acquireLatestImage()
-                if (image != null) {
-                    processAndSendImage(image)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Lỗi đọc frame: ${e.message}")
-            } finally {
-                image?.close()
-            }
-        }, handler)
     }
 
     private fun processAndSendImage(image: Image) {
