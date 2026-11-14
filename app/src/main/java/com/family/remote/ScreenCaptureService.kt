@@ -78,7 +78,7 @@ class ScreenCaptureService : Service() {
             ACTION_START -> {
                 val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
                 val resultData = intent.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
-                val serverUrl = intent.getStringExtra(EXTRA_SERVER_URL) ?: "wss://draw-vendor-certificates-concept.trycloudflare.com"
+                val serverUrl = intent.getStringExtra(EXTRA_SERVER_URL) ?: "wss://relaxed-major-hen.ngrok-free.app"
 
                 if (resultData != null) {
                     isIntentionalStop = false
