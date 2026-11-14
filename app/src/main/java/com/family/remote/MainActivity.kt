@@ -10,11 +10,15 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.content.ClipboardManager
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -30,7 +34,7 @@ class MainActivity : ComponentActivity() {
 
     private var isSharing by mutableStateOf(false)
     private var isAccessibilityEnabled by mutableStateOf(false)
-    private var serverUrlState by mutableStateOf("ws://192.168.1.100:8080")
+    private var serverUrlState by mutableStateOf("ws://127.0.0.1:8080")
 
     private val screenCaptureLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -59,7 +63,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         val prefs = getSharedPreferences("family_remote", Context.MODE_PRIVATE)
-        serverUrlState = prefs.getString("server_url", "ws://192.168.1.100:8080") ?: "ws://192.168.1.100:8080"
+        serverUrlState = prefs.getString("server_url", "ws://127.0.0.1:8080") ?: "ws://127.0.0.1:8080"
 
         // Vừa vào app -> Tự động xin quyền thông báo (Android 13+) và dẫn vào mở quyền Hỗ trợ tiếp cận
         requestPermissionsOnStartup()
@@ -278,13 +282,61 @@ fun ParentScreen(
                 }
 
                 if (showConfig) {
+                    val context = androidx.compose.ui.platform.LocalContext.current
                     OutlinedTextField(
                         value = serverUrl,
                         onValueChange = onServerUrlChange,
-                        label = { Text("Địa chỉ Server WebSocket (VD: ws://IP:8080)") },
+                        label = { Text("Địa chỉ WebSocket (ws://... hoặc wss://...)") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                val clip = clipboard.primaryClip
+                                if (clip != null && clip.itemCount > 0) {
+                                    val text = clip.getItemAt(0).text?.toString()?.trim() ?: ""
+                                    if (text.startsWith("ws://") || text.startsWith("wss://")) {
+                                        onServerUrlChange(text)
+                                        Toast.makeText(context, "Đã dán link từ bộ nhớ tạm!", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        // Nếu copy link https://...trycloudflare.com -> tự động chuyển sang wss://
+                                        val wsConverted = if (text.startsWith("https://")) {
+                                            text.replaceFirst("https://", "wss://")
+                                        } else if (text.startsWith("http://")) {
+                                            text.replaceFirst("http://", "ws://")
+                                        } else {
+                                            text
+                                        }
+                                        onServerUrlChange(wsConverted)
+                                        Toast.makeText(context, "Đã nhận link: $wsConverted", Toast.LENGTH_SHORT).show()
+                                    }
+                                } else {
+                                    Toast.makeText(context, "Bộ nhớ tạm trống!", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("📋 Dán link", fontSize = 12.sp)
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                onServerUrlChange("ws://127.0.0.1:8080")
+                                Toast.makeText(context, "Đã đặt về mặc định localhost", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("↺ Mặc định", fontSize = 12.sp)
+                        }
+                    }
                 }
             }
         }

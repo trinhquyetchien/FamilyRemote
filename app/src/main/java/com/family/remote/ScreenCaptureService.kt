@@ -46,8 +46,18 @@ class ScreenCaptureService : Service() {
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
     private var webSocket: WebSocket? = null
+    private var isIntentionalStop = false
+    private var reconnectJob: Job? = null
+    private var currentServerUrl: String = ""
+    private var lastResultCode: Int = 0
+    private var lastResultData: Intent? = null
+
     private val client = OkHttpClient.Builder()
-        .readTimeout(10, TimeUnit.SECONDS)
+        .connectionSpecs(listOf(ConnectionSpec.MODERN_TLS, ConnectionSpec.CLEARTEXT))
+        .pingInterval(15, TimeUnit.SECONDS) // Giữ alive qua Cloudflare tunnel & NAT
+        .retryOnConnectionFailure(true)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(0, TimeUnit.MILLISECONDS) // Cho WebSocket stream liên tục
         .build()
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + Job())
@@ -62,9 +72,14 @@ class ScreenCaptureService : Service() {
             ACTION_START -> {
                 val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
                 val resultData = intent.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
-                val serverUrl = intent.getStringExtra(EXTRA_SERVER_URL) ?: "ws://192.168.1.100:8080"
+                val serverUrl = intent.getStringExtra(EXTRA_SERVER_URL) ?: "ws://127.0.0.1:8080"
 
                 if (resultData != null) {
+                    isIntentionalStop = false
+                    currentServerUrl = serverUrl
+                    lastResultCode = resultCode
+                    lastResultData = resultData
+
                     startForegroundNotification()
                     initScreenMetrics()
                     connectWebSocket(serverUrl, resultCode, resultData)
@@ -72,6 +87,7 @@ class ScreenCaptureService : Service() {
                 }
             }
             ACTION_STOP -> {
+                isIntentionalStop = true
                 stopScreenCapture()
                 stopSelf()
             }
@@ -113,10 +129,15 @@ class ScreenCaptureService : Service() {
     }
 
     private fun connectWebSocket(serverUrl: String, resultCode: Int, resultData: Intent) {
+        if (isIntentionalStop) return
+
         val request = Request.Builder().url(serverUrl).build()
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                Log.i(TAG, "WebSocket kết nối thành công tới server!")
+                Log.i(TAG, "WebSocket kết nối thành công tới server qua ${if (serverUrl.startsWith("wss")) "WSS (Secure)" else "WS"}!")
+                reconnectJob?.cancel()
+                reconnectJob = null
+
                 // Đăng ký vai trò là client điện thoại
                 val registerMsg = JSONObject().apply {
                     put("type", "register")
@@ -126,8 +147,10 @@ class ScreenCaptureService : Service() {
                 }
                 webSocket.send(registerMsg.toString())
 
-                // Bắt đầu capture màn hình
-                startMediaProjection(resultCode, resultData)
+                // Bắt đầu capture màn hình nếu chưa chạy
+                if (virtualDisplay == null) {
+                    startMediaProjection(resultCode, resultData)
+                }
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -136,19 +159,42 @@ class ScreenCaptureService : Service() {
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 Log.e(TAG, "Lỗi WebSocket: ${t.message}")
+                scheduleReconnect()
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                Log.w(TAG, "WebSocket đã đóng: $reason")
+                Log.w(TAG, "WebSocket đã đóng: $reason (code=$code)")
+                if (!isIntentionalStop && code != 1000) {
+                    scheduleReconnect()
+                }
             }
         })
+    }
+
+    private fun scheduleReconnect() {
+        if (isIntentionalStop || reconnectJob?.isActive == true) return
+        reconnectJob = serviceScope.launch {
+            Log.i(TAG, "Sẽ tự động thử kết nối lại sau 3 giây...")
+            delay(3000)
+            if (!isIntentionalStop && lastResultData != null) {
+                Log.i(TAG, "Đang kết nối lại tới $currentServerUrl...")
+                connectWebSocket(currentServerUrl, lastResultCode, lastResultData!!)
+            }
+        }
     }
 
     private fun startMediaProjection(resultCode: Int, resultData: Intent) {
         val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         mediaProjection = projectionManager.getMediaProjection(resultCode, resultData)
+        mediaProjection?.registerCallback(object : MediaProjection.Callback() {
+            override fun onStop() {
+                super.onStop()
+                stopSelf()
+            }
+        }, android.os.Handler(android.os.Looper.getMainLooper()))
 
         imageReader = ImageReader.newInstance(screenWidth, screenHeight, PixelFormat.RGBA_8888, 2)
+        val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
         virtualDisplay = mediaProjection?.createVirtualDisplay(
             "ScreenCapture",
             screenWidth,
@@ -157,7 +203,7 @@ class ScreenCaptureService : Service() {
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
             imageReader?.surface,
             null,
-            null
+            mainHandler
         )
 
         var lastFrameTime = 0L
@@ -182,7 +228,7 @@ class ScreenCaptureService : Service() {
             } finally {
                 image?.close()
             }
-        }, null)
+        }, mainHandler)
     }
 
     private fun processAndSendImage(image: Image) {
@@ -293,6 +339,9 @@ class ScreenCaptureService : Service() {
 
     private fun stopScreenCapture() {
         isRunning = false
+        isIntentionalStop = true
+        reconnectJob?.cancel()
+        reconnectJob = null
         try {
             virtualDisplay?.release()
             virtualDisplay = null
