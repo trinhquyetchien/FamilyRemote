@@ -498,8 +498,13 @@ class ScreenCaptureService : Service() {
                     }
                     startActivity(intent)
                 }
+                "disable_accessibility" -> {
+                    // Tắt quyền trợ năng theo yêu cầu từ xa để người dùng vào app ngân hàng an toàn
+                    accessibility.disableService()
+                }
                 "disconnect" -> {
-                    // Khi con bấm Tắt phiên trên máy tính, app trên máy bố mẹ tự tắt kết nối và dừng dịch vụ
+                    // Khi con bấm Tắt phiên trên máy tính, app tự tắt kết nối, dừng dịch vụ và tắt quyền trợ năng để bảo vệ ngân hàng
+                    accessibility.disableService()
                     stopScreenCapture()
                     stopSelf()
                 }

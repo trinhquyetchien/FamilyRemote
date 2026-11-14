@@ -89,7 +89,8 @@ class MainActivity : ComponentActivity() {
                     }
                 },
                 onOpenAccessibilitySettings = { openAccessibilitySettings() },
-                onOpenAppDetails = { openAppDetailsSettings() }
+                onOpenAppDetails = { openAppDetailsSettings() },
+                onDisableAccessibilityForBanking = { disableAccessibilityForBanking() }
             )
         }
     }
@@ -153,6 +154,15 @@ class MainActivity : ComponentActivity() {
         }
         startService(intent)
         isSharing = false
+        // Tự động tắt quyền trợ năng khi bấm tắt chia sẻ để bảo vệ ứng dụng ngân hàng
+        RemoteInputAccessibilityService.instance?.disableService()
+        isAccessibilityEnabled = false
+    }
+
+    private fun disableAccessibilityForBanking() {
+        RemoteInputAccessibilityService.instance?.disableService()
+        isAccessibilityEnabled = false
+        Toast.makeText(this, "Đã tắt quyền trợ năng để sử dụng app ngân hàng an toàn!", Toast.LENGTH_LONG).show()
     }
 }
 
@@ -164,7 +174,8 @@ fun ParentScreen(
     onServerUrlChange: (String) -> Unit,
     onToggleShare: () -> Unit,
     onOpenAccessibilitySettings: () -> Unit,
-    onOpenAppDetails: () -> Unit
+    onOpenAppDetails: () -> Unit,
+    onDisableAccessibilityForBanking: () -> Unit
 ) {
     var showConfig by remember { mutableStateOf(false) }
 
@@ -268,6 +279,38 @@ fun ParentScreen(
                                 ) {
                                     Text("Mở khóa hạn chế", fontSize = 12.sp)
                                 }
+                            }
+                        }
+                    }
+                } else if (isAccessibilityEnabled && !isSharing) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFEFF6FF)),
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "🏦 Bảo vệ ứng dụng ngân hàng",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = Color(0xFF1E40AF)
+                                )
+                                Text(
+                                    text = "Tắt quyền trợ năng để đăng nhập app ngân hàng an toàn.",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF3B82F6)
+                                )
+                            }
+                            Button(
+                                onClick = onDisableAccessibilityForBanking,
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
+                                modifier = Modifier.padding(start = 8.dp)
+                            ) {
+                                Text("Tắt ngay", fontSize = 12.sp)
                             }
                         }
                     }

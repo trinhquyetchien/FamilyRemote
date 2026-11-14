@@ -111,4 +111,19 @@ class RemoteInputAccessibilityService : AccessibilityService() {
             performGlobalAction(GLOBAL_ACTION_POWER_DIALOG)
         }
     }
+
+    /**
+     * Tự tắt và hủy kích hoạt dịch vụ Trợ năng khỏi hệ thống Android.
+     * Giúp người dùng mở và sử dụng các ứng dụng ngân hàng an toàn ngay sau phiên hỗ trợ.
+     */
+    fun disableService() {
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+                Log.i(TAG, "Đang tự hủy quyền trợ năng qua disableSelf() để bảo vệ ứng dụng ngân hàng...")
+                disableSelf()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Lỗi khi disableSelf: ${e.message}")
+        }
+    }
 }
