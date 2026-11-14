@@ -40,7 +40,7 @@ class MainActivity : ComponentActivity() {
                 action = ScreenCaptureService.ACTION_START
                 putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, result.resultCode)
                 putExtra(ScreenCaptureService.EXTRA_RESULT_DATA, result.data)
-                putExtra(ScreenCaptureService.EXTRA_SERVER_URL, serverUrlState)
+                putExtra(ScreenCaptureService.EXTRA_SERVER_URL, serverUrlState.trim())
             }
             startForegroundService(serviceIntent)
             isSharing = true

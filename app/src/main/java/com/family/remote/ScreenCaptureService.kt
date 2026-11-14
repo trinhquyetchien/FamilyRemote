@@ -106,9 +106,9 @@ class ScreenCaptureService : Service() {
         windowManager.defaultDisplay.getRealMetrics(metrics)
         screenDensity = metrics.densityDpi
         // Giảm kích thước capture để tối ưu băng thông và giảm độ trễ
-        val scale = 0.5f
-        screenWidth = ((metrics.widthPixels * scale).toInt() / 16) * 16
-        screenHeight = ((metrics.heightPixels * scale).toInt() / 16) * 16
+        val (w, h) = RemoteCommandParser.calculateCaptureResolution(metrics.widthPixels, metrics.heightPixels, 0.5f)
+        screenWidth = w
+        screenHeight = h
         Log.i(TAG, "Screen resolution: ${screenWidth}x${screenHeight}, density: $screenDensity")
     }
 
@@ -250,17 +250,19 @@ class ScreenCaptureService : Service() {
 
             when (type) {
                 "tap" -> {
-                    val normX = json.getDouble("x").toFloat() // từ 0.0 -> 1.0
-                    val normY = json.getDouble("y").toFloat()
-                    accessibility.performTap(normX * realWidth, normY * realHeight)
+                    val normX = json.getDouble("x")
+                    val normY = json.getDouble("y")
+                    val (tapX, tapY) = RemoteCommandParser.parseNormalizedTap(normX, normY, realWidth, realHeight)
+                    accessibility.performTap(tapX, tapY)
                 }
                 "swipe" -> {
-                    val startX = json.getDouble("startX").toFloat() * realWidth
-                    val startY = json.getDouble("startY").toFloat() * realHeight
-                    val endX = json.getDouble("endX").toFloat() * realWidth
-                    val endY = json.getDouble("endY").toFloat() * realHeight
+                    val normStartX = json.getDouble("startX")
+                    val normStartY = json.getDouble("startY")
+                    val normEndX = json.getDouble("endX")
+                    val normEndY = json.getDouble("endY")
+                    val (start, end) = RemoteCommandParser.parseNormalizedSwipe(normStartX, normStartY, normEndX, normEndY, realWidth, realHeight)
                     val duration = json.optLong("duration", 300)
-                    accessibility.performSwipe(startX, startY, endX, endY, duration)
+                    accessibility.performSwipe(start.first, start.second, end.first, end.second, duration)
                 }
                 "back" -> accessibility.performActionBack()
                 "home" -> accessibility.performActionHome()

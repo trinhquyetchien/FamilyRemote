@@ -77,6 +77,10 @@ wss.on('connection', (ws) => {
             webClients.delete(ws);
         }
     });
+
+    ws.on('error', (err) => {
+        console.error('WebSocket error:', err.message);
+    });
 });
 
 function broadcastToWeb(data) {

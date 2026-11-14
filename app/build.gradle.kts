@@ -84,4 +84,8 @@ dependencies {
     
     // Gson
     implementation("com.google.code.gson:gson:2.10.1")
+
+    // Unit Testing
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20231013")
 }
