@@ -45,6 +45,13 @@ class ScreenCaptureService : Service() {
         const val EXTRA_RESULT_DATA = "EXTRA_RESULT_DATA"
         const val EXTRA_SERVER_URL = "EXTRA_SERVER_URL"
 
+        // Scale 0.35f giúp kích thước frame đạt khoảng 360x800 hoặc 376x840.
+        // Dung lượng mỗi frame chỉ khoảng 10-18KB (giảm 75% băng thông mạng 4G so với 0.5f).
+        const val CAPTURE_SCALE = 0.35f
+        const val JPEG_QUALITY = 45
+        const val FRAME_INTERVAL_MS = 40L // ~25 FPS ổn định, mượt mà và không nghẽn mạng
+        const val MAX_PENDING_QUEUE_BYTES = 64 * 1024L // 64KB ngưỡng drop frame chống tích tụ trễ
+
         var isRunning = false
             private set
     }
@@ -133,7 +140,7 @@ class ScreenCaptureService : Service() {
         windowManager.defaultDisplay.getRealMetrics(metrics)
         screenDensity = metrics.densityDpi
         // Giảm kích thước capture để tối ưu băng thông và giảm độ trễ
-        val (w, h) = RemoteCommandParser.calculateCaptureResolution(metrics.widthPixels, metrics.heightPixels, 0.5f)
+        val (w, h) = RemoteCommandParser.calculateCaptureResolution(metrics.widthPixels, metrics.heightPixels, CAPTURE_SCALE)
         screenWidth = w
         screenHeight = h
         currentOrientation = RemoteCommandParser.getOrientation(screenWidth, screenHeight)
@@ -149,7 +156,7 @@ class ScreenCaptureService : Service() {
         val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val metrics = DisplayMetrics()
         windowManager.defaultDisplay.getRealMetrics(metrics)
-        val (newW, newH) = RemoteCommandParser.calculateCaptureResolution(metrics.widthPixels, metrics.heightPixels, 0.5f)
+        val (newW, newH) = RemoteCommandParser.calculateCaptureResolution(metrics.widthPixels, metrics.heightPixels, CAPTURE_SCALE)
         val newOrient = RemoteCommandParser.getOrientation(newW, newH)
 
         if (newW != screenWidth || newH != screenHeight || newOrient != currentOrientation) {
@@ -205,16 +212,16 @@ class ScreenCaptureService : Service() {
             var lastFrameTime = 0L
             imageReader?.setOnImageAvailableListener({ reader ->
                 val now = System.currentTimeMillis()
-                // Nâng FPS lên 35-40 FPS (khoảng 25-28ms)
-                if (now - lastFrameTime < 25) {
+                // Giới hạn 24-25 FPS (~40ms interval) mượt mà, tối ưu mạng 4G
+                if (now - lastFrameTime < FRAME_INTERVAL_MS) {
                     val img = reader.acquireLatestImage()
                     img?.close()
                     return@setOnImageAvailableListener
                 }
 
-                // Kiểm tra queueSize của WebSocket OkHttp để tự động drop frame nếu mạng chập chờn
+                // Kiểm tra queueSize của WebSocket OkHttp: nếu quá 64KB -> drop frame ngay để không bị tích tụ trễ trên 4G
                 val pendingBytes = webSocket?.queueSize() ?: 0L
-                if (pendingBytes > 256 * 1024) { // Nếu hàng đợi gửi quá 256KB -> drop frame
+                if (pendingBytes > MAX_PENDING_QUEUE_BYTES) {
                     val img = reader.acquireLatestImage()
                     img?.close()
                     return@setOnImageAvailableListener
@@ -337,16 +344,16 @@ class ScreenCaptureService : Service() {
         var lastFrameTime = 0L
         imageReader?.setOnImageAvailableListener({ reader ->
             val now = System.currentTimeMillis()
-            // Nâng FPS lên 35-40 FPS (khoảng 25-28ms)
-            if (now - lastFrameTime < 25) {
+            // Giới hạn 24-25 FPS (~40ms interval) mượt mà, tối ưu mạng 4G
+            if (now - lastFrameTime < FRAME_INTERVAL_MS) {
                 val img = reader.acquireLatestImage()
                 img?.close()
                 return@setOnImageAvailableListener
             }
 
-            // Kiểm tra queueSize của WebSocket OkHttp để tự động drop frame nếu mạng chập chờn
+            // Kiểm tra queueSize của WebSocket OkHttp: nếu quá 64KB -> drop frame ngay để không bị tích tụ trễ trên 4G
             val pendingBytes = webSocket?.queueSize() ?: 0L
-            if (pendingBytes > 256 * 1024) { // Nếu hàng đợi gửi quá 256KB -> drop frame
+            if (pendingBytes > MAX_PENDING_QUEUE_BYTES) {
                 val img = reader.acquireLatestImage()
                 img?.close()
                 return@setOnImageAvailableListener
@@ -389,9 +396,9 @@ class ScreenCaptureService : Service() {
             bitmap
         }
 
-        // Nén ảnh sang JPEG chất lượng 55% để cân bằng sắc nét và tốc độ nén siêu nhanh
-        val outputStream = ByteArrayOutputStream(64 * 1024)
-        croppedBitmap.compress(Bitmap.CompressFormat.JPEG, 55, outputStream)
+        // Nén ảnh sang JPEG chất lượng 45% để cân bằng sắc nét và tốc độ nén siêu nhanh, nhẹ mạng
+        val outputStream = ByteArrayOutputStream(32 * 1024)
+        croppedBitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, outputStream)
         val jpegBytes = outputStream.toByteArray()
 
         // Gửi Direct Binary ByteString thay vì JSON Base64 (giảm 33% payload, triệt tiêu overhead encode/decode)
