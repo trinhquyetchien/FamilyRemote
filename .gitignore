@@ -17,7 +17,3 @@ local.properties
 # Android build outputs
 app/build/
 build/
-
-# Server
-server/node_modules/
-server/npm-debug.log
