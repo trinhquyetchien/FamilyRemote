@@ -30,6 +30,12 @@ class RemoteCommandParserTest {
     }
 
     @Test
+    fun testGetOrientation() {
+        assertEquals("portrait", RemoteCommandParser.getOrientation(1080, 2400))
+        assertEquals("landscape", RemoteCommandParser.getOrientation(2400, 1080))
+    }
+
+    @Test
     fun testParseNormalizedSwipe() {
         val (start, end) = RemoteCommandParser.parseNormalizedSwipe(0.1, 0.2, 0.8, 0.9, 1000f, 2000f)
         assertEquals(100f, start.first, 0.001f)

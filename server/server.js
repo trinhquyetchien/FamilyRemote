@@ -66,12 +66,13 @@ wss.on('connection', (ws, req) => {
                     } catch (_) {}
                 }
                 phoneClient = ws;
-                console.log(`--> [Phone] Điện thoại bố mẹ đã sẵn sàng! (${data.screenWidth || '?'}x${data.screenHeight || '?'})`);
+                console.log(`--> [Phone] Điện thoại bố mẹ đã sẵn sàng! (${data.screenWidth || '?'}x${data.screenHeight || '?'}, ${data.orientation || 'portrait'})`);
                 broadcastToWeb({
                     type: 'status',
                     status: 'phone_connected',
                     screenWidth: data.screenWidth,
-                    screenHeight: data.screenHeight
+                    screenHeight: data.screenHeight,
+                    orientation: data.orientation || 'portrait'
                 });
                 return;
             }
@@ -88,17 +89,26 @@ wss.on('connection', (ws, req) => {
                 return;
             }
 
-            // 3. Nếu là frame hình ảnh từ điện thoại -> chuyển tiếp tới tất cả Web Controller
+            // 3. Nếu là thông báo kích thước/xoay màn hình từ điện thoại -> chuyển tiếp tới Web Controller
+            if (data.type === 'screen_size') {
+                console.log(`--> [Rotate] Xoay màn hình: ${data.width}x${data.height} (${data.orientation})`);
+                broadcastToWeb(data);
+                return;
+            }
+
+            // 4. Nếu là frame hình ảnh từ điện thoại -> chuyển tiếp tới tất cả Web Controller
             if (data.type === 'frame') {
                 frameCount++;
                 broadcastToWeb(data);
                 return;
             }
 
-            // 4. Nếu là lệnh điều khiển từ Web -> gửi tới điện thoại
+            // 5. Nếu là lệnh điều khiển từ Web -> gửi tới điện thoại
             const supportedActions = [
                 'tap', 'swipe', 'back', 'home', 'recents',
-                'notifications', 'power', 'lock', 'volume_up', 'volume_down', 'disconnect'
+                'notifications', 'power', 'lock', 'volume_up', 'volume_down', 'mute',
+                'open_settings', 'open_app_permissions', 'open_accessibility', 'open_wifi',
+                'disconnect'
             ];
 
             if (supportedActions.includes(data.type)) {

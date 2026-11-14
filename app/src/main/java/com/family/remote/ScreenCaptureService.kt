@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
@@ -15,11 +16,14 @@ import android.media.Image
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
+import android.net.Uri
 import android.os.Build
 import android.os.IBinder
+import android.provider.Settings
 import android.util.Base64
 import android.util.DisplayMetrics
 import android.util.Log
+import android.view.OrientationEventListener
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.*
@@ -51,6 +55,8 @@ class ScreenCaptureService : Service() {
     private var currentServerUrl: String = ""
     private var lastResultCode: Int = 0
     private var lastResultData: Intent? = null
+    private var orientationListener: OrientationEventListener? = null
+    private var currentOrientation: String = "portrait"
 
     private val client = OkHttpClient.Builder()
         .connectionSpecs(listOf(ConnectionSpec.MODERN_TLS, ConnectionSpec.CLEARTEXT))
@@ -125,7 +131,89 @@ class ScreenCaptureService : Service() {
         val (w, h) = RemoteCommandParser.calculateCaptureResolution(metrics.widthPixels, metrics.heightPixels, 0.5f)
         screenWidth = w
         screenHeight = h
-        Log.i(TAG, "Screen resolution: ${screenWidth}x${screenHeight}, density: $screenDensity")
+        currentOrientation = RemoteCommandParser.getOrientation(screenWidth, screenHeight)
+        Log.i(TAG, "Screen resolution: ${screenWidth}x${screenHeight}, orientation: $currentOrientation, density: $screenDensity")
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        checkAndHandleOrientationChange()
+    }
+
+    private fun checkAndHandleOrientationChange() {
+        val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val metrics = DisplayMetrics()
+        windowManager.defaultDisplay.getRealMetrics(metrics)
+        val (newW, newH) = RemoteCommandParser.calculateCaptureResolution(metrics.widthPixels, metrics.heightPixels, 0.5f)
+        val newOrient = RemoteCommandParser.getOrientation(newW, newH)
+
+        if (newW != screenWidth || newH != screenHeight || newOrient != currentOrientation) {
+            Log.i(TAG, "Phát hiện xoay màn hình: ${screenWidth}x${screenHeight} -> ${newW}x${newH} ($newOrient)")
+            screenWidth = newW
+            screenHeight = newH
+            screenDensity = metrics.densityDpi
+            currentOrientation = newOrient
+
+            // Gửi thông báo thay đổi kích thước lên server & web
+            val sizeMsg = JSONObject().apply {
+                put("type", "screen_size")
+                put("width", screenWidth)
+                put("height", screenHeight)
+                put("orientation", currentOrientation)
+            }
+            webSocket?.send(sizeMsg.toString())
+
+            // Cập nhật lại ImageReader và VirtualDisplay nếu đang chạy
+            recreateVirtualDisplay()
+        }
+    }
+
+    private fun recreateVirtualDisplay() {
+        if (mediaProjection == null) return
+        try {
+            virtualDisplay?.release()
+            virtualDisplay = null
+            imageReader?.close()
+            imageReader = null
+
+            imageReader = ImageReader.newInstance(screenWidth, screenHeight, PixelFormat.RGBA_8888, 2)
+            val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+            virtualDisplay = mediaProjection?.createVirtualDisplay(
+                "ScreenCapture",
+                screenWidth,
+                screenHeight,
+                screenDensity,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                imageReader?.surface,
+                null,
+                mainHandler
+            )
+
+            var lastFrameTime = 0L
+            imageReader?.setOnImageAvailableListener({ reader ->
+                val now = System.currentTimeMillis()
+                if (now - lastFrameTime < 60) {
+                    val img = reader.acquireLatestImage()
+                    img?.close()
+                    return@setOnImageAvailableListener
+                }
+                lastFrameTime = now
+
+                var image: Image? = null
+                try {
+                    image = reader.acquireLatestImage()
+                    if (image != null) {
+                        processAndSendImage(image)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Lỗi đọc frame sau khi xoay: ${e.message}")
+                } finally {
+                    image?.close()
+                }
+            }, mainHandler)
+        } catch (e: Exception) {
+            Log.e(TAG, "Lỗi tạo lại VirtualDisplay: ${e.message}")
+        }
     }
 
     private fun connectWebSocket(serverUrl: String, resultCode: Int, resultData: Intent) {
@@ -144,8 +232,12 @@ class ScreenCaptureService : Service() {
                     put("role", "phone")
                     put("screenWidth", screenWidth)
                     put("screenHeight", screenHeight)
+                    put("orientation", currentOrientation)
                 }
                 webSocket.send(registerMsg.toString())
+
+                // Bắt đầu lắng nghe sự kiện xoay màn hình
+                startOrientationListener()
 
                 // Bắt đầu capture màn hình nếu chưa chạy
                 if (virtualDisplay == null) {
@@ -171,6 +263,19 @@ class ScreenCaptureService : Service() {
         })
     }
 
+    private fun startOrientationListener() {
+        if (orientationListener == null) {
+            orientationListener = object : OrientationEventListener(this) {
+                override fun onOrientationChanged(orientation: Int) {
+                    if (orientation == ORIENTATION_UNKNOWN) return
+                    checkAndHandleOrientationChange()
+                }
+            }
+        }
+        if (orientationListener?.canDetectOrientation() == true) {
+            orientationListener?.enable()
+        }
+    }
     private fun scheduleReconnect() {
         if (isIntentionalStop || reconnectJob?.isActive == true) return
         reconnectJob = serviceScope.launch {
@@ -326,6 +431,41 @@ class ScreenCaptureService : Service() {
                     audioManager.adjustStreamVolume(AudioManager.STREAM_RING, AudioManager.ADJUST_LOWER, AudioManager.FLAG_SHOW_UI)
                     audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_LOWER, AudioManager.FLAG_SHOW_UI)
                 }
+                "mute" -> {
+                    val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_MUTE, AudioManager.FLAG_SHOW_UI)
+                        audioManager.adjustStreamVolume(AudioManager.STREAM_RING, AudioManager.ADJUST_MUTE, AudioManager.FLAG_SHOW_UI)
+                    } else {
+                        audioManager.setStreamMute(AudioManager.STREAM_MUSIC, true)
+                        audioManager.setStreamMute(AudioManager.STREAM_RING, true)
+                    }
+                }
+                "open_settings" -> {
+                    val intent = Intent(Settings.ACTION_SETTINGS).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    startActivity(intent)
+                }
+                "open_app_permissions" -> {
+                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                        data = Uri.fromParts("package", packageName, null)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    startActivity(intent)
+                }
+                "open_accessibility" -> {
+                    val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    startActivity(intent)
+                }
+                "open_wifi" -> {
+                    val intent = Intent(Settings.ACTION_WIFI_SETTINGS).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    startActivity(intent)
+                }
                 "disconnect" -> {
                     // Khi con bấm Tắt phiên trên máy tính, app trên máy bố mẹ tự tắt kết nối và dừng dịch vụ
                     stopScreenCapture()
@@ -340,6 +480,8 @@ class ScreenCaptureService : Service() {
     private fun stopScreenCapture() {
         isRunning = false
         isIntentionalStop = true
+        orientationListener?.disable()
+        orientationListener = null
         reconnectJob?.cancel()
         reconnectJob = null
         try {

@@ -25,6 +25,10 @@ object RemoteCommandParser {
         return Pair(targetWidth.coerceAtLeast(alignment), targetHeight.coerceAtLeast(alignment))
     }
 
+    fun getOrientation(width: Int, height: Int): String {
+        return if (width > height) "landscape" else "portrait"
+    }
+
     fun parseNormalizedTap(normX: Double, normY: Double, realWidth: Float, realHeight: Float): Pair<Float, Float> {
         val clampedX = normX.coerceIn(0.0, 1.0).toFloat()
         val clampedY = normY.coerceIn(0.0, 1.0).toFloat()
